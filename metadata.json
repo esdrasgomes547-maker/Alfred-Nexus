@@ -1,0 +1,6 @@
+{
+  "name": "Alfred Nexus",
+  "description": "Plataforma avançada de simulação de agentes IA Locais com exportador completo do framework Python Alfred Nexus.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
