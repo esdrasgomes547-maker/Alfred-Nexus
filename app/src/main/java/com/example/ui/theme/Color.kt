@@ -2,13 +2,25 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val AlfredVoid        = Color(0xFF060608)
-val AlfredObsidian    = Color(0xFF0D0D10)
-val AlfredPlate       = Color(0xFF1A1A1E)
-val AlfredSteel       = Color(0xFF2A2A30)
-val AlfredBrass       = Color(0xFFC09A3C)
-val AlfredBrassBright = Color(0xFFD4AE52)
-val AlfredBrassDim    = Color(0xFF8A6E28)
-val AlfredText        = Color(0xFFE8D5A0)
-val AlfredGhost       = Color(0x66C8B478)
-val AlfredDanger      = Color(0xFFCC4444)
+// Piano lacquer blacks
+val PianoBlack    = Color(0xFF060606)
+val EbonyDeep     = Color(0xFF0F0F0F)
+val EbonySurface  = Color(0xFF1A1A1A)
+val EbonyBorder   = Color(0xFF2A2A2A)
+
+// Luxury whites and ivory
+val IvoryWhite    = Color(0xFFF2EDE4)   // warm ivory — primary text on black
+val IvoryCream    = Color(0xFFFAF8F3)   // near-pure white — user bubble bg
+val PlatinumGray  = Color(0xFF9A9A9A)   // secondary labels
+val GhostIvory    = Color(0x40F2EDE4)   // 25% ivory — ghost/placeholder text
+
+// Gold — the only color in an otherwise monochrome world
+val GoldAccent    = Color(0xFFC8A951)
+val GoldBright    = Color(0xFFE0C068)
+val GoldDim       = Color(0xFF8A7030)
+val GoldGhost     = Color(0x30C8A951)   // 19% gold for ripples/halos
+
+// Pure white (sparingly — highlights only)
+val PureWhite     = Color(0xFFFFFFFF)
+
+val DangerRed     = Color(0xFFCC3333)

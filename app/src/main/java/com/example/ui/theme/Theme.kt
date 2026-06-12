@@ -5,18 +5,18 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 
 private val AlfredColorScheme = darkColorScheme(
-    primary      = AlfredBrass,
-    onPrimary    = AlfredVoid,
-    secondary    = AlfredBrassBright,
-    onSecondary  = AlfredVoid,
-    tertiary     = AlfredBrassDim,
-    background   = AlfredVoid,
-    surface      = AlfredObsidian,
-    onBackground = AlfredText,
-    onSurface    = AlfredText,
-    outline      = AlfredSteel,
-    error        = AlfredDanger,
-    onError      = AlfredText,
+    primary       = GoldAccent,
+    onPrimary     = PianoBlack,
+    secondary     = GoldBright,
+    onSecondary   = PianoBlack,
+    tertiary      = GoldDim,
+    background    = PianoBlack,
+    surface       = EbonyDeep,
+    onBackground  = IvoryWhite,
+    onSurface     = IvoryWhite,
+    outline       = EbonyBorder,
+    error         = DangerRed,
+    onError       = IvoryWhite,
 )
 
 @Composable
