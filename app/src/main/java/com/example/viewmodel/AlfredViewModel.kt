@@ -3,159 +3,93 @@ package com.example.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.data.*
+import com.example.data.AlfredApi
+import com.example.data.ApiMessage
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
+enum class AlfredState { IDLE, PONDERING, RESPONDING }
+
+data class ChatMessage(
+    val id:          Long    = System.currentTimeMillis(),
+    val role:        String,
+    val content:     String,
+    val isStreaming: Boolean = false,
+)
+
 class AlfredViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = AlfredRepository(application)
 
-    // Reactive State lists from Database
-    val allPrompts: StateFlow<List<WorkspacePrompt>> = repository.allPrompts
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // Set to the notebook's LAN IP during real usage; 10.0.2.2 works for the Android emulator.
+    var serverUrl: String = "http://10.0.2.2:8000"
+    var token:     String = ""
 
-    val allRagDocs: StateFlow<List<LocalRAGDoc>> = repository.allRagDocs
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val _messages    = MutableStateFlow<List<ChatMessage>>(emptyList())
+    val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
-    val allReflections: StateFlow<List<SelfReflectionLog>> = repository.allReflections
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val _alfredState = MutableStateFlow(AlfredState.IDLE)
+    val alfredState: StateFlow<AlfredState> = _alfredState.asStateFlow()
 
-    // Workspace control states
-    private val _currentPromptId = MutableStateFlow<Int?>(null)
-    val currentPromptId: StateFlow<Int?> = _currentPromptId.asStateFlow()
+    private var streamJob: Job? = null
 
-    private val _currentLogs = MutableStateFlow<List<AgentRunLog>>(emptyList())
-    val currentLogs: StateFlow<List<AgentRunLog>> = _currentLogs.asStateFlow()
+    fun send(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty() || _alfredState.value != AlfredState.IDLE) return
 
-    private val _isPipelineRunning = MutableStateFlow(false)
-    val isPipelineRunning: StateFlow<Boolean> = _isPipelineRunning.asStateFlow()
+        _messages.update { it + ChatMessage(role = "user", content = trimmed) }
+        _alfredState.value = AlfredState.PONDERING
 
-    private val _isOptimizing = MutableStateFlow(false)
-    val isOptimizing: StateFlow<Boolean> = _isOptimizing.asStateFlow()
+        streamJob = viewModelScope.launch {
+            val placeholderId = System.currentTimeMillis() + 1L
+            _messages.update { it + ChatMessage(id = placeholderId, role = "assistant", content = "", isStreaming = true) }
+            _alfredState.value = AlfredState.RESPONDING
 
-    private val _activeTab = MutableStateFlow("playground") // playground, code_hub, rag, settings, voice
-    val activeTab: StateFlow<String> = _activeTab.asStateFlow()
+            val history = _messages.value
+                .filter { !it.isStreaming }
+                .takeLast(20)
+                .map { ApiMessage(it.role, it.content) }
 
-    // Configuration Settings (saved in datastore/memory)
-    private val _selectedModel = MutableStateFlow("qwen2.5-coder:7b")
-    val selectedModel: StateFlow<String> = _selectedModel.asStateFlow()
+            var buffer = ""
 
-    private val _quantizationMode = MutableStateFlow("q4_K_M (4-bit)")
-    val quantizationMode: StateFlow<String> = _quantizationMode.asStateFlow()
-
-    private val _vectorStoreType = MutableStateFlow("ChromaDB (Local)")
-    val vectorStoreType: StateFlow<String> = _vectorStoreType.asStateFlow()
-
-    init {
-        // Automatically listen to Agent logs when the selectedPromptId changes
-        viewModelScope.launch {
-            _currentPromptId.collectLatest { id ->
-                if (id != null) {
-                    repository.getLogsForPromptFlow(id).collect { logs ->
-                        _currentLogs.value = logs
+            AlfredApi(serverUrl, token).streamChat(
+                messages = history,
+                onToken  = { tok ->
+                    buffer += tok
+                    _messages.update { msgs ->
+                        msgs.map { m -> if (m.id == placeholderId) m.copy(content = buffer) else m }
                     }
-                } else {
-                    _currentLogs.value = emptyList()
+                },
+                onDone   = {
+                    _messages.update { msgs ->
+                        msgs.map { m ->
+                            if (m.id == placeholderId) m.copy(content = buffer, isStreaming = false) else m
+                        }
+                    }
+                    _alfredState.value = AlfredState.IDLE
+                },
+                onError  = { err ->
+                    _messages.update { msgs ->
+                        msgs.map { m ->
+                            if (m.id == placeholderId) m.copy(
+                                content = if (buffer.isNotEmpty()) buffer else "— Falha de conexão. Verifique o servidor, senhor.",
+                                isStreaming = false
+                            ) else m
+                        }
+                    }
+                    _alfredState.value = AlfredState.IDLE
                 }
-            }
-        }
-
-        // Set the most recent prompt as selected automatically on list update if none selected
-        viewModelScope.launch {
-            allPrompts.collect { list ->
-                if (_currentPromptId.value == null && list.isNotEmpty()) {
-                    _currentPromptId.value = list.first().id
-                }
-            }
+            )
         }
     }
 
-    fun selectPrompt(id: Int) {
-        _currentPromptId.value = id
+    fun cancel() {
+        streamJob?.cancel()
+        _messages.update { msgs -> msgs.map { m -> if (m.isStreaming) m.copy(isStreaming = false) else m } }
+        _alfredState.value = AlfredState.IDLE
     }
 
-    fun setTab(tab: String) {
-        _activeTab.value = tab
-    }
-
-    fun updateConfig(model: String, quant: String, dbType: String) {
-        _selectedModel.value = model
-        _quantizationMode.value = quant
-        _vectorStoreType.value = dbType
-    }
-
-    /**
-     * Triggers the complete agentic pipeline
-     */
-    fun runPipeline(promptText: String) {
-        if (promptText.isBlank()) return
-        viewModelScope.launch {
-            _isPipelineRunning.value = true
-            try {
-                // Execute pipeline, passing active indexed RAG docs for context compilation
-                val promptId = repository.executeAgentPipeline(promptText, allRagDocs.value)
-                _currentPromptId.value = promptId
-            } catch (e: Exception) {
-                // Log and safe fallback is managed inside service, but we handle exceptions here too
-            } finally {
-                _isPipelineRunning.value = false
-            }
-        }
-    }
-
-    /**
-     * Adds virtual documentation for RAG simulation
-     */
-    fun addRagDoc(fileName: String, content: String) {
-        viewModelScope.launch {
-            repository.addRagDocument(fileName, content)
-        }
-    }
-
-    /**
-     * Deletes a specific RAG doc
-     */
-    fun deleteRagDoc(id: Int) {
-        viewModelScope.launch {
-            repository.deleteRagDoc(id)
-        }
-    }
-
-    /**
-     * Deletes a prompt and its run steps
-     */
-    fun removePrompt(id: Int) {
-        viewModelScope.launch {
-            if (_currentPromptId.value == id) {
-                _currentPromptId.value = null
-            }
-            repository.deletePrompt(id)
-        }
-    }
-
-    /**
-     * Resets the databases/workspace
-     */
-    fun clearAllData() {
-        viewModelScope.launch {
-            _currentPromptId.value = null
-            _currentLogs.value = emptyList()
-            repository.clearWorkspace()
-        }
-    }
-
-    /**
-     * Triggers the self-reflection loop manually
-     */
-    fun optimizeAgents() {
-        if (allPrompts.value.isEmpty()) return
-        viewModelScope.launch {
-            _isOptimizing.value = true
-            try {
-                repository.triggerSelfReflection(allPrompts.value)
-            } finally {
-                _isOptimizing.value = false
-            }
-        }
+    fun clearHistory() {
+        cancel()
+        _messages.value = emptyList()
     }
 }

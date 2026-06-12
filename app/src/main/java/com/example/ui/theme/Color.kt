@@ -2,14 +2,13 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val CyberBlack = Color(0xFF090B0F)
-val ObsidianDark = Color(0xFF131722)
-val SlateGrey = Color(0xFF1B2332)
-val CyberCyan = Color(0xFF00E6FF)
-val ActiveGreen = Color(0xFF00FF88)
-val SmoothTeal = Color(0xFF00FFA6)
-val DangerRed = Color(0xFFFF4949)
-val GhostText = Color(0x80FFFFFF)
-val PureWhite = Color(0xFFFFFFFF)
-val MutedSlate = Color(0xFF2C394E)
-
+val AlfredVoid        = Color(0xFF060608)
+val AlfredObsidian    = Color(0xFF0D0D10)
+val AlfredPlate       = Color(0xFF1A1A1E)
+val AlfredSteel       = Color(0xFF2A2A30)
+val AlfredBrass       = Color(0xFFC09A3C)
+val AlfredBrassBright = Color(0xFFD4AE52)
+val AlfredBrassDim    = Color(0xFF8A6E28)
+val AlfredText        = Color(0xFFE8D5A0)
+val AlfredGhost       = Color(0x66C8B478)
+val AlfredDanger      = Color(0xFFCC4444)
