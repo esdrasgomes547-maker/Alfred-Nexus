@@ -10,9 +10,11 @@ import logging
 import asyncio
 from typing import Literal
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, field_validator
@@ -314,10 +316,14 @@ async def forge_approve(
     return {"tool": req.tool_name, "status": status_val}
 
 
-# Rota raiz genérica — não revela nada
-@app.get("/")
-async def root():
-    return Response(status_code=200)
+# Serve o frontend buildado se o diretório existir
+_FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+if _FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
+else:
+    @app.get("/")
+    async def root():
+        return Response(status_code=200)
 
 
 # Absorve qualquer rota desconhecida com 403 genérico (não 404)
