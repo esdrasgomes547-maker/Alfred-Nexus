@@ -1,18 +1,21 @@
-# Ponto de entrada principal do Alfred — FastAPI + SSE + autenticação por token.
+# Ponto de entrada principal do Alfred — FastAPI endurecido para produção.
+# Nenhum detalhe interno vaza para o cliente; o servidor é invisível para scanners.
 
 import os
 import json
 import uuid
 import time
+import hashlib
 import logging
 import asyncio
+from typing import Literal
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from persona import build_messages, ALFRED_GREETING
 from llm import stream_completion, probe_brain, get_active_brain, get_last_latency
@@ -22,7 +25,10 @@ from memory import (
 )
 from forge import get_forge_status
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "WARNING")),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -30,10 +36,26 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 AUTH_TOKEN = os.getenv("ALFRED_TOKEN", "")
-RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", "30"))
+# Hash do token para evitar comparação em texto claro no log
+_AUTH_HASH = hashlib.sha256(AUTH_TOKEN.encode()).hexdigest() if AUTH_TOKEN else ""
 
-# Contador simples em memória para rate limiting (1 usuário)
+RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", "30"))
+ENV = os.getenv("ALFRED_ENV", "production")
+
+# Origens permitidas — nunca "*" em produção
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:80")
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
+# Tamanho máximo do corpo da requisição (1 MB)
+MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", str(1 * 1024 * 1024)))
+
+# Rate limit: contador por hash de token (ou IP como fallback)
 _rate_window: dict[str, list[float]] = {}
+
+# Falhas de autenticação (lockout após N tentativas)
+_auth_failures: dict[str, list[float]] = {}
+MAX_AUTH_FAILURES = 10
+AUTH_FAILURE_WINDOW = 300  # 5 minutos
 
 
 # ---------------------------------------------------------------------------
@@ -43,61 +65,155 @@ _rate_window: dict[str, list[float]] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    logger.info("Alfred online. Cérebro: %s", await probe_brain())
+    brain = await probe_brain()
+    logger.warning("Alfred online. Cérebro: %s", brain)
     yield
-    logger.info("Alfred encerrando.")
+    logger.warning("Alfred encerrando.")
 
 
-app = FastAPI(title="Alfred API", version="1.0.0", lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # restringir via Tailscale na produção
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# Desabilita /docs e /redoc em produção — não expõe a superfície da API
+app = FastAPI(
+    title="Alfred",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url=None if ENV == "production" else "/docs",
+    redoc_url=None,
+    openapi_url=None if ENV == "production" else "/openapi.json",
 )
 
 # ---------------------------------------------------------------------------
-# Auth
+# Middlewares
+# ---------------------------------------------------------------------------
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next) -> Response:
+    """Cabeçalhos de segurança em toda resposta — invisibilidade e proteção."""
+    response: Response = await call_next(request)
+
+    # Remove header Server — não vaza stack do servidor
+    # Remove header server — uvicorn injeta o dele; sobrescrevemos com vazio
+    del response.headers["server"]
+
+    # Proteções de segurança padrão
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+
+    # HSTS — só em HTTPS real
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+
+    # CSP restritivo
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; connect-src 'self'"
+    )
+
+    return response
+
+
+@app.middleware("http")
+async def enforce_body_size(request: Request, call_next) -> Response:
+    """Bloqueia corpos maiores que MAX_BODY_BYTES antes de parsear."""
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_BODY_BYTES:
+        return Response(status_code=413, content=b'{"detail":"Payload too large"}',
+                        media_type="application/json")
+    return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
+# Auth e rate limiting
 # ---------------------------------------------------------------------------
 
 security = HTTPBearer(auto_error=False)
 
 
-def verify_token(credentials: HTTPAuthorizationCredentials | None = Depends(security)) -> None:
-    if not AUTH_TOKEN:
-        return  # sem token configurado: modo desenvolvimento local
-    if not credentials or credentials.credentials != AUTH_TOKEN:
-        raise HTTPException(status_code=401, detail="Token inválido.")
+def _client_key(request: Request, token: str | None) -> str:
+    """Identifica o cliente pelo hash do token (preferencial) ou IP."""
+    if token:
+        return f"tok:{hashlib.sha256(token.encode()).hexdigest()[:16]}"
+    ip = request.client.host if request.client else "unknown"
+    return f"ip:{ip}"
 
 
-def check_rate_limit(client_ip: str) -> None:
+def _check_auth_lockout(ip: str) -> None:
+    """Rejeita IPs com muitas falhas de auth recentes."""
     now = time.time()
-    window = _rate_window.setdefault(client_ip, [])
-    # Remove timestamps mais antigos que 60s
-    _rate_window[client_ip] = [t for t in window if now - t < 60]
-    if len(_rate_window[client_ip]) >= RATE_LIMIT_RPM:
-        raise HTTPException(status_code=429, detail="Muitas requisições. Aguarde um momento.")
-    _rate_window[client_ip].append(now)
+    fails = _auth_failures.get(ip, [])
+    _auth_failures[ip] = [t for t in fails if now - t < AUTH_FAILURE_WINDOW]
+    if len(_auth_failures[ip]) >= MAX_AUTH_FAILURES:
+        # Resposta genérica — não revela motivo
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+
+
+def verify_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> str | None:
+    """Valida Bearer token e aplica rate limit. Resposta 403 genérica."""
+    ip = request.client.host if request.client else "unknown"
+    _check_auth_lockout(ip)
+
+    if not AUTH_TOKEN:
+        # Modo dev sem token: rate limit por IP
+        check_rate_limit(f"ip:{ip}")
+        return None
+
+    token = credentials.credentials if credentials else None
+    token_hash = hashlib.sha256(token.encode()).hexdigest() if token else ""
+
+    if token_hash != _AUTH_HASH:
+        _auth_failures.setdefault(ip, []).append(time.time())
+        audit("auth_failure", target=ip)
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+
+    # Rate limit por hash do token — não por IP (resiste a proxies compartilhados)
+    check_rate_limit(f"tok:{token_hash[:16]}")
+    return token
+
+
+def check_rate_limit(key: str) -> None:
+    now = time.time()
+    _rate_window[key] = [t for t in _rate_window.get(key, []) if now - t < 60]
+    if len(_rate_window[key]) >= RATE_LIMIT_RPM:
+        raise HTTPException(status_code=429, detail="Muitas requisições.")
+    _rate_window[key].append(now)
 
 
 # ---------------------------------------------------------------------------
-# Schemas
+# Schemas — validação rigorosa de entrada
 # ---------------------------------------------------------------------------
 
 class Message(BaseModel):
-    role: str
-    content: str
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=8_000)
+
+    @field_validator("content")
+    @classmethod
+    def no_null_bytes(cls, v: str) -> str:
+        if "\x00" in v:
+            raise ValueError("Conteúdo inválido.")
+        return v
 
 
 class ChatRequest(BaseModel):
-    messages: list[Message]
-    session_id: str | None = None
+    messages: list[Message] = Field(..., min_length=1, max_length=50)
+    # session_id SEMPRE gerado pelo servidor; campo aqui só para o cliente referenciar
+    session_id: str | None = Field(None, pattern=r"^[a-f0-9\-]{36}$")
 
 
 class ForgeApprovalRequest(BaseModel):
-    tool_name: str
+    tool_name: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
     approved: bool
 
 
@@ -107,68 +223,70 @@ class ForgeApprovalRequest(BaseModel):
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "greeting": ALFRED_GREETING}
+    # Sem informação de versão ou arquitetura interna
+    return {"status": "ok"}
 
 
 @app.post("/api/chat")
 async def chat(
     req: ChatRequest,
     request: Request,
-    _: None = Depends(verify_token),
+    token: str | None = Depends(verify_token),
 ):
-    check_rate_limit(request.client.host if request.client else "unknown")
+    # Session ID gerado server-side — ignora qualquer valor do cliente
+    session_id = str(uuid.uuid4())
 
-    session_id = req.session_id or str(uuid.uuid4())
-    # Constrói histórico: mensagens vindas do cliente + memória da sessão
     client_messages = [m.model_dump() for m in req.messages]
-
-    # Injeta persona do Alfred (system prompt server-side)
     full_messages = build_messages(client_messages)
 
-    # Salva a última mensagem do usuário
     if client_messages and client_messages[-1]["role"] == "user":
         save_turn(session_id, "user", client_messages[-1]["content"])
 
     async def event_stream():
-        collected = []
+        collected: list[str] = []
         t_start = time.monotonic()
+        token_count = 0
+        MAX_TOKENS = 4_096
+
         try:
             async for token in stream_completion(full_messages):
+                if token_count >= MAX_TOKENS:
+                    break
+                token_count += 1
                 collected.append(token)
-                payload = json.dumps({"token": token, "session_id": session_id})
-                yield f"data: {payload}\n\n"
+                yield f"data: {json.dumps({'token': token, 'session_id': session_id})}\n\n"
 
             response_text = "".join(collected)
             latency = (time.monotonic() - t_start) * 1000
 
-            # Persiste resposta e telemetria
             save_turn(session_id, "assistant", response_text, model=get_active_brain())
             record_call(latency)
 
             yield f"data: {json.dumps({'done': True, 'session_id': session_id})}\n\n"
 
-        except Exception as exc:
-            logger.error("Erro no stream: %s", exc)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+        except Exception:
+            # Nunca vaza detalhes internos para o cliente
+            logger.exception("Erro interno no stream")
+            yield f"data: {json.dumps({'error': 'Falha interna. Tente novamente.'})}\n\n"
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-store",
             "X-Accel-Buffering": "no",
+            "X-Content-Type-Options": "nosniff",
         },
     )
 
 
 @app.get("/api/status")
-async def status(_: None = Depends(verify_token)):
+async def status(token: str | None = Depends(verify_token)):
     stats = get_today_stats()
     forge = get_forge_status()
-
     return {
         "brain": get_active_brain(),
-        "quota": "ok",  # Groq não expõe quota via header facilmente — placeholder
+        "quota": "ok",
         "scope_locked": True,
         "eval": forge["eval_summary"],
         "calls_today": stats["calls_today"],
@@ -178,20 +296,40 @@ async def status(_: None = Depends(verify_token)):
 
 
 @app.get("/api/tools")
-async def tools(_: None = Depends(verify_token)):
+async def tools(token: str | None = Depends(verify_token)):
     return {"tools": list_tools()}
 
 
 @app.post("/api/forge/approve")
-async def forge_approve(req: ForgeApprovalRequest, _: None = Depends(verify_token)):
+async def forge_approve(
+    req: ForgeApprovalRequest,
+    token: str | None = Depends(verify_token),
+):
     status_val = "approved" if req.approved else "rejected"
     ok = set_tool_status(req.tool_name, status_val)
     if not ok:
-        raise HTTPException(status_code=404, detail="Ferramenta não encontrada.")
+        # Não revela se a ferramenta existe ou não
+        raise HTTPException(status_code=403, detail="Operação não autorizada.")
     audit("forge_approval", target=req.tool_name, result=status_val)
     return {"tool": req.tool_name, "status": status_val}
 
 
+# Rota raiz genérica — não revela nada
 @app.get("/")
 async def root():
-    return {"service": "Alfred", "version": "1.0.0"}
+    return Response(status_code=200)
+
+
+# Absorve qualquer rota desconhecida com 403 genérico (não 404)
+# — impede enumeração de rotas por scanners
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc):
+    return Response(status_code=403, content=b'{"detail":"Acesso negado."}',
+                    media_type="application/json")
+
+
+@app.exception_handler(Exception)
+async def global_error_handler(request: Request, exc: Exception):
+    logger.exception("Erro não tratado")
+    return Response(status_code=500, content=b'{"detail":"Erro interno."}',
+                    media_type="application/json")
