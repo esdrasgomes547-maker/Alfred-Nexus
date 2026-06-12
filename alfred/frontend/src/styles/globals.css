@@ -1,0 +1,143 @@
+/* Sistema de design do Alfred — latão, preto profundo, precisão de instrumento */
+
+:root {
+  /* Superfícies — preto de verdade dominando */
+  --void:          #060608;
+  --surface:       #0C0C10;
+  --surface-raised: #121217;
+  --surface-high:  #18181F;
+  --border:        #1E1E27;
+  --border-bright: #2A2A36;
+
+  /* Latão — o único respiro de cor, usado com parcimônia */
+  --brass:         #C09A3C;
+  --brass-bright:  #D4AE52;
+  --brass-dim:     #8A6E28;
+  --brass-muted:   #4A3C14;
+  --brass-glow:    rgba(192, 154, 60, 0.10);
+  --brass-glow-md: rgba(192, 154, 60, 0.20);
+  --brass-glow-lg: rgba(192, 154, 60, 0.35);
+
+  /* Texto — cinza frio, contrasta com o calor do latão */
+  --text-primary:   #DDDDD8;
+  --text-secondary: #7A7A88;
+  --text-muted:     #404050;
+  --text-brass:     #C09A3C;
+
+  /* Tipografia */
+  --font-display:  'Space Grotesk', sans-serif;
+  --font-mono:     'IBM Plex Mono', monospace;
+  --font-body:     'Inter', sans-serif;
+
+  /* Raio e bordas */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+
+  /* Transições */
+  --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-snap: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Reset mínimo */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--void);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar discreta no tom do console */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--brass-muted); }
+
+/* Seleção com latão */
+::selection {
+  background: var(--brass-muted);
+  color: var(--brass-bright);
+}
+
+/* Rótulos gravados — small caps, tracking aberto, relevo sutil */
+.label-engraved {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.9), 0 -1px 0 rgba(255,255,255,0.04);
+}
+
+/* Monoespaçado de instrumento */
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* Foco de teclado visível (acessibilidade) */
+:focus-visible {
+  outline: 1px solid var(--brass-dim);
+  outline-offset: 2px;
+}
+
+/* Suporte a prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ─── Animações do núcleo ─────────────────────────────────────── */
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%       { opacity: 0.90; transform: scale(1.025); }
+}
+
+@keyframes pulse-fast {
+  0%, 100% { opacity: 0.70; transform: scale(1); }
+  30%       { opacity: 1.00; transform: scale(1.04); }
+  60%       { opacity: 0.80; transform: scale(0.98); }
+}
+
+@keyframes ripple-out {
+  0%   { transform: scale(1);   opacity: 0.6; }
+  100% { transform: scale(1.6); opacity: 0;   }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes spin-reverse {
+  from { transform: rotate(360deg); }
+  to   { transform: rotate(0deg); }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
