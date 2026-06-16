@@ -1,0 +1,24 @@
+{
+  "name": "factoria",
+  "version": "1.0.0",
+  "description": "Plataforma desktop para criar e gerenciar bots de WhatsApp com IA",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:electron": "electron .",
+    "build:frontend": "cd frontend && npm run build",
+    "start": "npm run build:frontend && electron .",
+    "db:migrate": "cd backend && npx prisma migrate deploy",
+    "db:studio": "cd backend && npx prisma studio",
+    "db:generate": "cd backend && npx prisma generate",
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^31.0.0",
+    "wait-on": "^8.0.0"
+  }
+}
