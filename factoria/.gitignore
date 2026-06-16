@@ -9,3 +9,8 @@ backend/prisma/migrations/
 dist-electron/
 *.log
 .DS_Store
+
+# DBs de teste
+backend/prisma/*.db
+backend/prisma/*.db-journal
+backend/test-boot.db*

@@ -1,12 +1,26 @@
 // Rotas /api/skills — habilidades (gatilho → resposta fixa) dos bots
 const express = require("express");
 const router = express.Router();
-const { PrismaClient } = require("@prisma/client");
+const { z } = require("zod");
+const prisma = require("../db");
+const { asyncHandler, validar } = require("../utils/http");
 
-const prisma = new PrismaClient();
+const criarSchema = z.object({
+  botId:    z.string().min(1, "botId obrigatório"),
+  name:     z.string().trim().max(80).optional(),
+  trigger:  z.string().trim().min(1, "trigger obrigatório").max(200),
+  response: z.string().trim().min(1, "response obrigatório").max(4000),
+});
+
+const editarSchema = z.object({
+  name:     z.string().trim().max(80).optional(),
+  trigger:  z.string().trim().min(1).max(200).optional(),
+  response: z.string().trim().min(1).max(4000).optional(),
+  active:   z.boolean().optional(),
+});
 
 // GET /api/skills?botId=xxx — lista skills de um bot
-router.get("/", async (req, res) => {
+router.get("/", asyncHandler(async (req, res) => {
   const { botId } = req.query;
   if (!botId) return res.status(400).json({ error: "botId obrigatório" });
   const skills = await prisma.skill.findMany({
@@ -14,22 +28,19 @@ router.get("/", async (req, res) => {
     orderBy: { createdAt: "asc" },
   });
   res.json(skills);
-});
+}));
 
 // POST /api/skills — cria skill
-router.post("/", async (req, res) => {
+router.post("/", validar(criarSchema), asyncHandler(async (req, res) => {
   const { botId, name, trigger, response } = req.body;
-  if (!botId || !trigger || !response) {
-    return res.status(400).json({ error: "botId, trigger e response são obrigatórios" });
-  }
   const skill = await prisma.skill.create({
     data: { botId, name: name || trigger, trigger, response },
   });
   res.status(201).json(skill);
-});
+}));
 
 // PATCH /api/skills/:id — edita skill
-router.patch("/:id", async (req, res) => {
+router.patch("/:id", validar(editarSchema), asyncHandler(async (req, res) => {
   const { name, trigger, response, active } = req.body;
   const skill = await prisma.skill.update({
     where: { id: req.params.id },
@@ -41,12 +52,12 @@ router.patch("/:id", async (req, res) => {
     },
   });
   res.json(skill);
-});
+}));
 
 // DELETE /api/skills/:id — remove skill
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", asyncHandler(async (req, res) => {
   await prisma.skill.delete({ where: { id: req.params.id } });
   res.json({ ok: true });
-});
+}));
 
 module.exports = router;

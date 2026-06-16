@@ -3,6 +3,7 @@ const express = require("express");
 const router = express.Router();
 const { execSync } = require("child_process");
 const brain = require("../services/brain");
+const { asyncHandler } = require("../utils/http");
 
 // GET /api/infra/docker — lista containers WAHA ativos
 router.get("/docker", (_req, res) => {
@@ -44,7 +45,7 @@ router.get("/status", (_req, res) => {
 // POST /api/infra/chat — IA interna (chat de configuração/ajuda)
 // A IA responde perguntas sobre como operar o FactorIA.
 // Pendência #5 do handoff: em breve executará ações via tool-calling.
-router.post("/chat", async (req, res) => {
+router.post("/chat", asyncHandler(async (req, res) => {
   const { mensagem } = req.body;
   if (!mensagem) return res.status(400).json({ error: "mensagem obrigatória" });
 
@@ -60,6 +61,6 @@ router.post("/chat", async (req, res) => {
 
   const resposta = await brain.responder(botInterno, mensagem, "__interno__");
   res.json({ resposta: resposta || "Não consegui processar — verifique a chave do LLM no .env" });
-});
+}));
 
 module.exports = router;

@@ -57,26 +57,38 @@ async function _ollama(sistema, historico) {
   return resp.data?.message?.content?.trim() || "";
 }
 
-// Memória simples em memória (por chatId) — suficiente pra contexto de curta duração.
-// Para persistência longa, mover pro banco.
-const memoria = new Map(); // chatId -> [{role, content}]
+// Memória de curta duração em RAM, com chave composta bot+chat.
+// Antes a chave era só o chatId: dois bots conversando com o MESMO número
+// compartilhavam (e corrompiam) o mesmo histórico. Agora é isolada por bot.
+// Para persistência longa, mover pro banco (model Log já guarda o histórico).
+const memoria = new Map(); // "botId::chatId" -> [{role, content}]
+const MAX_MENSAGENS = 20;  // ~10 trocas
 
-function obterHistorico(chatId) {
-  if (!memoria.has(chatId)) memoria.set(chatId, []);
-  return memoria.get(chatId);
+function chave(bot, chatId) {
+  return `${bot?.id || "global"}::${chatId}`;
 }
 
-function registrarMensagem(chatId, papel, conteudo) {
-  const hist = obterHistorico(chatId);
+function obterHistorico(bot, chatId) {
+  const k = chave(bot, chatId);
+  if (!memoria.has(k)) memoria.set(k, []);
+  return memoria.get(k);
+}
+
+function registrarMensagem(bot, chatId, papel, conteudo) {
+  const hist = obterHistorico(bot, chatId);
   hist.push({ role: papel, content: conteudo });
-  // Mantém só as últimas 10 trocas (20 mensagens)
-  if (hist.length > 20) hist.splice(0, hist.length - 20);
+  if (hist.length > MAX_MENSAGENS) hist.splice(0, hist.length - MAX_MENSAGENS);
+}
+
+// Limpa a memória de uma conversa (ex.: após handoff ou reset).
+function limparMemoria(bot, chatId) {
+  memoria.delete(chave(bot, chatId));
 }
 
 async function responder(bot, mensagem, chatId) {
   const sistema = promptSistema(bot);
-  registrarMensagem(chatId, "user", mensagem);
-  const historico = obterHistorico(chatId);
+  registrarMensagem(bot, chatId, "user", mensagem);
+  const historico = obterHistorico(bot, chatId);
 
   const provedor = provedorEmUso();
   try {
@@ -85,7 +97,7 @@ async function responder(bot, mensagem, chatId) {
     else if (provedor === "groq")  resposta = await _groq(sistema, historico);
     else                           resposta = await _ollama(sistema, historico);
 
-    if (resposta) registrarMensagem(chatId, "assistant", resposta);
+    if (resposta) registrarMensagem(bot, chatId, "assistant", resposta);
     return resposta;
   } catch (err) {
     console.error(`[brain] Falha no provedor ${provedor}:`, err.message);
@@ -93,4 +105,4 @@ async function responder(bot, mensagem, chatId) {
   }
 }
 
-module.exports = { responder, provedorEmUso };
+module.exports = { responder, provedorEmUso, limparMemoria };

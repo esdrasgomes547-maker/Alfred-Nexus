@@ -12,11 +12,9 @@
 
 const express = require("express");
 const router = express.Router();
-const { PrismaClient } = require("@prisma/client");
+const prisma = require("../db");
 const waha  = require("../services/waha");
 const brain = require("../services/brain");
-
-const prisma = new PrismaClient();
 
 // Deduplicação de eventos (WAHA às vezes reenvia). TTL de 5 min.
 const seen = new Map(); // msgId -> timestamp
