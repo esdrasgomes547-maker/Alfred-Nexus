@@ -45,6 +45,32 @@ model Bot {
   updatedAt     DateTime @updatedAt
 }
 
+// Chave de API para integrações externas (gateway /v1).
+// O segredo nunca é guardado em texto — só o hash sha256 e um prefixo visível.
+model ApiKey {
+  id         String   @id @default(uuid())
+  label      String
+  prefix     String   @unique   // ex.: "fct_a1b2c3d4" — usado pra localizar a chave
+  keyHash    String              // sha256 hex da chave completa
+  botId      String?             // escopo: null = todos os bots
+  scopes     String   @default("send,read,chat")
+  active     Boolean  @default(true)
+  lastUsedAt DateTime?
+  createdAt  DateTime @default(now())
+}
+
+// Endpoint que recebe eventos do FactorIA (webhooks de saída).
+// Permite plugar CRM/n8n/sistema do cliente no fluxo das mensagens.
+model WebhookEndpoint {
+  id        String   @id @default(uuid())
+  botId     String?            // null = eventos de todos os bots
+  url       String
+  secret    String             // assina o payload via HMAC-SHA256
+  events    String   @default("message.in,message.out,handoff")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
 // Habilidades do bot: gatilho → resposta fixa (skill simples sem LLM)
 model Skill {
   id        String   @id @default(uuid())

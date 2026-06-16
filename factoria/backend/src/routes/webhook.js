@@ -15,6 +15,7 @@ const router = express.Router();
 const prisma = require("../db");
 const waha  = require("../services/waha");
 const brain = require("../services/brain");
+const gateway = require("../services/gateway");
 
 // Deduplicação de eventos (WAHA às vezes reenvia). TTL de 5 min.
 const seen = new Map(); // msgId -> timestamp
@@ -99,6 +100,7 @@ router.post("/:botId", async (req, res) => {
     await prisma.log.create({
       data: { botId, phone: chatId, direction: "in", body: textoOriginal },
     });
+    gateway.dispararEvento(botId, "message.in", { from: chatId, text: textoOriginal });
 
     // Verifica se alguma skill responde (resposta fixa, sem LLM)
     const skills = await prisma.skill.findMany({ where: { botId, active: true } });
@@ -117,6 +119,7 @@ router.post("/:botId", async (req, res) => {
       await prisma.log.create({
         data: { botId, phone: chatId, direction: "out", body: resposta },
       });
+      gateway.dispararEvento(botId, "message.out", { to: chatId, text: resposta });
     }
   } catch (err) {
     console.error("[webhook] Erro:", err.message);

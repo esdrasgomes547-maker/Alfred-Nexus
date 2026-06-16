@@ -15,6 +15,8 @@ const authRouter    = require("./routes/auth");
 const botsRouter    = require("./routes/bots");
 const skillsRouter  = require("./routes/skills");
 const infraRouter   = require("./routes/infra");
+const keysRouter    = require("./routes/keys");
+const gatewayRouter = require("./routes/gateway");
 const webhookRouter = require("./routes/webhook");
 
 const app = express();
@@ -53,6 +55,16 @@ app.get("/health", (_req, res) => res.json({ status: "ok", ts: Date.now() }));
 // Webhook do WAHA — sem rate limit nem auth (tráfego de máquina, vem do container).
 app.use("/webhook/waha", webhookRouter);
 
+// Gateway público de integração — autenticado por chave de API (não por login).
+const gatewayLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,                // 120 req/min por IP no gateway externo
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Limite do gateway atingido — reduza o ritmo." },
+});
+app.use("/v1", gatewayLimiter, gatewayRouter);
+
 // Autenticação (setup/login são públicos; o resto exige token — tratado no router).
 app.use("/api/auth", authLimiter, authRouter);
 
@@ -61,6 +73,7 @@ app.use("/api", apiLimiter);
 app.use("/api/bots",   requireAuth, botsRouter);
 app.use("/api/skills", requireAuth, skillsRouter);
 app.use("/api/infra",  requireAuth, infraRouter);
+app.use("/api/keys",   requireAuth, keysRouter);
 
 // 404 para rotas desconhecidas sob /api.
 app.use("/api", (_req, res) => res.status(404).json({ error: "Rota não encontrada" }));
