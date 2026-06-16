@@ -22,6 +22,11 @@ npm run db:migrate     # cria o banco SQLite
 npm run dev            # sobe backend + frontend + Electron simultaneamente
 ```
 
+As chaves sensíveis (API keys, URLs do WAHA, etc.) não precisam mais ficar só no
+`.env` — podem ser preenchidas direto na UI, na tela **🔐 Porão** (acessível pelo
+rodapé do menu lateral). Elas são encriptadas no keychain do sistema operacional
+via Electron `safeStorage` e injetadas no backend ao reiniciar.
+
 ## Scripts úteis
 
 | Comando | O que faz |
@@ -52,15 +57,36 @@ factoria/
       schema.prisma  ← Bot (cmdOn/cmdOff por bot), Skill, Log
   frontend/
     src/
+      components/
+        Card.jsx, Badge.jsx, Button.jsx, Input.jsx, StatusDot.jsx
+      hooks/
+        useApi.js    ← wrapper de fetch com loading/error
       pages/
-        Factory.jsx  ← lista e cria bots
-        BotDetail.jsx ← status, QR, skills, logs, edição
-        Infra.jsx    ← containers Docker + chat IA interna
-      App.jsx        ← roteamento
+        Dashboard.jsx   ← lista de agentes com status em tempo real
+        AgentWizard.jsx ← criação de agente em 3 passos
+        AgentDetail.jsx ← conexão, configurações, skills, histórico
+        InfraPage.jsx   ← containers Docker + chat IA interna
+        Porao.jsx       ← cofre de chaves da plataforma
+      App.jsx        ← roteamento + menu lateral
+      index.html     ← design system obsidian / black piano (CSS vars)
   electron/
-    main.js          ← sobe backend como filho, serve frontend
-    preload.js
+    main.js          ← sobe backend como filho, serve frontend, registra IPC
+    preload.js       ← expõe electronAPI (porão, versão, logs do backend)
+    store.js         ← cofre encriptado (Electron safeStorage)
 ```
+
+## Porão — cofre de chaves
+
+Tela de configurações avançadas (`/porao`) onde ficam as credenciais pesadas da
+plataforma: chaves de LLM (Groq/Anthropic), WAHA, ElevenLabs, WhatsApp do dono e
+URL do banco. Nunca tocam o disco em texto puro:
+
+- `electron/store.js` usa `safeStorage.isEncryptionAvailable()` + `safeStorage.encryptString`
+  para gravar um arquivo encriptado em `app.getPath("userData")`.
+- A renderer só vê valores mascarados (`••••••••`) via IPC (`porao:get`) — nunca o valor real.
+- Salvar (`porao:set`) só atualiza os campos que o usuário de fato editou.
+- "Reiniciar backend" mata o processo filho do Express e sobe de novo já com as
+  novas chaves injetadas via `env`.
 
 ## Rotas da API
 
