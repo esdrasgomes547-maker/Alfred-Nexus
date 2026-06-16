@@ -9,6 +9,9 @@ const rateLimit = require("express-rate-limit");
 const prisma = require("./db");
 const { tratadorDeErro } = require("./utils/http");
 
+const { requireAuth } = require("./middleware/auth");
+
+const authRouter    = require("./routes/auth");
 const botsRouter    = require("./routes/bots");
 const skillsRouter  = require("./routes/skills");
 const infraRouter   = require("./routes/infra");
@@ -34,6 +37,15 @@ const apiLimiter = rateLimit({
   message: { error: "Muitas requisições — tente novamente em instantes." },
 });
 
+// Rate limit mais apertado pro login/setup (anti força-bruta).
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Muitas tentativas — aguarde alguns minutos." },
+});
+
 // ── Rotas ───────────────────────────────────────────────────────────────────
 // Healthcheck (Electron usa pra confirmar que o backend subiu).
 app.get("/health", (_req, res) => res.json({ status: "ok", ts: Date.now() }));
@@ -41,11 +53,14 @@ app.get("/health", (_req, res) => res.json({ status: "ok", ts: Date.now() }));
 // Webhook do WAHA — sem rate limit nem auth (tráfego de máquina, vem do container).
 app.use("/webhook/waha", webhookRouter);
 
-// API interna da plataforma.
+// Autenticação (setup/login são públicos; o resto exige token — tratado no router).
+app.use("/api/auth", authLimiter, authRouter);
+
+// API interna da plataforma — tudo protegido por login.
 app.use("/api", apiLimiter);
-app.use("/api/bots",   botsRouter);
-app.use("/api/skills", skillsRouter);
-app.use("/api/infra",  infraRouter);
+app.use("/api/bots",   requireAuth, botsRouter);
+app.use("/api/skills", requireAuth, skillsRouter);
+app.use("/api/infra",  requireAuth, infraRouter);
 
 // 404 para rotas desconhecidas sob /api.
 app.use("/api", (_req, res) => res.status(404).json({ error: "Rota não encontrada" }));

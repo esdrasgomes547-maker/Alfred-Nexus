@@ -10,6 +10,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Operadores da plataforma (login no painel FactorIA).
+// role: 'admin' (tudo) | 'operator' (opera bots) | 'viewer' (só leitura)
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String   @default("")
+  passwordHash String
+  role         String   @default("operator")
+  active       Boolean  @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 // Um bot = uma sessão de WhatsApp isolada num container WAHA
 model Bot {
   id            String   @id @default(uuid())
