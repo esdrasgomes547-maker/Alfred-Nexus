@@ -16,6 +16,18 @@ const prisma = require("../db");
 const waha  = require("../services/waha");
 const brain = require("../services/brain");
 const gateway = require("../services/gateway");
+const atendimento = require("../services/atendimento");
+const workflow = require("../services/workflow");
+
+// Envia uma mensagem de saída: WAHA + log + evento de webhook.
+async function enviarResposta(bot, chatId, texto) {
+  if (!texto) return;
+  await waha.sendText(bot.wahaPort, chatId, texto);
+  await prisma.log.create({
+    data: { botId: bot.id, phone: chatId, direction: "out", body: texto },
+  });
+  gateway.dispararEvento(bot.id, "message.out", { to: chatId, text: texto });
+}
 
 // Deduplicação de eventos (WAHA às vezes reenvia). TTL de 5 min.
 const seen = new Map(); // msgId -> timestamp
@@ -102,25 +114,59 @@ router.post("/:botId", async (req, res) => {
     });
     gateway.dispararEvento(botId, "message.in", { from: chatId, text: textoOriginal });
 
-    // Verifica se alguma skill responde (resposta fixa, sem LLM)
+    // Conversa do contato (atendimento virtual)
+    const conversa = await atendimento.upsertConversa(botId, chatId, payload.notifyName || payload._data?.notifyName || "");
+
+    // Um operador humano assumiu — a IA fica em silêncio.
+    if (conversa.status === "human") return;
+
+    // Pedido espontâneo de atendente humano → handoff.
+    const motivo = atendimento.detectarHandoff(normalized);
+    if (motivo) {
+      await atendimento.handoff(conversa, motivo);
+      await enviarResposta(bot, chatId, "Perfeito! Já estou te passando pra um atendente. 🙋 Aguarde um instante.");
+      gateway.dispararEvento(botId, "handoff", { phone: chatId, reason: motivo });
+      console.log(`[webhook] Handoff de ${chatId} no bot ${bot.name}: ${motivo}`);
+      return;
+    }
+
+    // 1) Skills (resposta fixa, sem LLM) têm prioridade.
     const skills = await prisma.skill.findMany({ where: { botId, active: true } });
     const skill  = skills.find((s) => normalized.includes(s.trigger.toLowerCase()));
-
-    let resposta;
     if (skill) {
-      resposta = skill.response;
-    } else {
-      // Cérebro (LLM)
-      resposta = await brain.responder(bot, textoOriginal, chatId);
+      await enviarResposta(bot, chatId, skill.response);
+      return;
     }
 
-    if (resposta) {
-      await waha.sendText(bot.wahaPort, chatId, resposta);
-      await prisma.log.create({
-        data: { botId, phone: chatId, direction: "out", body: resposta },
-      });
-      gateway.dispararEvento(botId, "message.out", { to: chatId, text: resposta });
+    // 2) Fluxo de trabalho ativo? Roda a máquina de estados.
+    const flow = await prisma.flow.findUnique({ where: { botId } }).catch(() => null);
+    if (flow?.active) {
+      let def = {};
+      try { def = JSON.parse(flow.definition || "{}"); } catch (_) {}
+      const vars = (() => { try { return JSON.parse(conversa.flowVars || "{}"); } catch { return {}; } })();
+
+      const r = conversa.flowNodeId
+        ? workflow.responder(def, conversa.flowNodeId, vars, textoOriginal)
+        : workflow.iniciar(def, vars);
+
+      for (const reply of r.replies || []) await enviarResposta(bot, chatId, reply);
+
+      if (r.handoff) {
+        await atendimento.handoff(conversa, r.reason || "fluxo");
+        gateway.dispararEvento(botId, "handoff", { phone: chatId, reason: r.reason });
+        return;
+      }
+
+      // Persiste o nó atual (null se terminou) e as variáveis coletadas.
+      await atendimento.salvarEstadoFluxo(conversa.id, r.end ? null : r.nodeId, r.vars);
+
+      // Só cai no cérebro se o nó pediu (tipo "ai"); senão encerra o turno.
+      if (!r.defer) return;
     }
+
+    // 3) Cérebro (LLM).
+    const resposta = await brain.responder(bot, textoOriginal, chatId);
+    await enviarResposta(bot, chatId, resposta);
   } catch (err) {
     console.error("[webhook] Erro:", err.message);
   }

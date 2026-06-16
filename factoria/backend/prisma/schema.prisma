@@ -83,6 +83,39 @@ model Skill {
   createdAt DateTime @default(now())
 }
 
+// Conversa por contato (atendimento virtual). Uma por (bot, telefone).
+// status: 'bot' (IA atende) | 'human' (operador assumiu) | 'closed' (encerrada)
+model Conversation {
+  id            String   @id @default(uuid())
+  botId         String
+  phone         String
+  contactName   String   @default("")
+  status        String   @default("bot")
+  handoffReason String?            // por que foi pra humano (palavra, pedido, fluxo)
+  assignedTo    String?            // id do operador que assumiu
+  // Estado do fluxo de trabalho desta conversa
+  flowNodeId    String?            // nó atual no fluxo ativo do bot
+  flowVars      String   @default("{}") // JSON com dados coletados
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([botId, phone])
+  @@index([botId, status])
+}
+
+// Fluxo de trabalho (workflow) de um bot — máquina de estados em JSON.
+// definition: { start, nodes: { id: { type, text, options, next, var } } }
+model Flow {
+  id         String   @id @default(uuid())
+  botId      String   @unique   // 1 fluxo ativo por bot (simplicidade)
+  name       String   @default("Fluxo principal")
+  active     Boolean  @default(false)
+  definition String   @default("{}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
 // Histórico de mensagens trocadas (entrada + saída)
 model Log {
   id        String   @id @default(uuid())

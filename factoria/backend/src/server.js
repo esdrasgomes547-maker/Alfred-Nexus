@@ -17,6 +17,8 @@ const skillsRouter  = require("./routes/skills");
 const infraRouter   = require("./routes/infra");
 const keysRouter    = require("./routes/keys");
 const gatewayRouter = require("./routes/gateway");
+const conversationsRouter = require("./routes/conversations");
+const flowsRouter   = require("./routes/flows");
 const webhookRouter = require("./routes/webhook");
 
 const app = express();
@@ -74,6 +76,8 @@ app.use("/api/bots",   requireAuth, botsRouter);
 app.use("/api/skills", requireAuth, skillsRouter);
 app.use("/api/infra",  requireAuth, infraRouter);
 app.use("/api/keys",   requireAuth, keysRouter);
+app.use("/api/conversations", requireAuth, conversationsRouter);
+app.use("/api/flows",  requireAuth, flowsRouter);
 
 // 404 para rotas desconhecidas sob /api.
 app.use("/api", (_req, res) => res.status(404).json({ error: "Rota não encontrada" }));
