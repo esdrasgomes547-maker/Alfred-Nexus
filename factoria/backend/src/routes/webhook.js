@@ -19,9 +19,22 @@ const gateway = require("../services/gateway");
 const atendimento = require("../services/atendimento");
 const workflow = require("../services/workflow");
 
-// Envia uma mensagem de saída: WAHA + log + evento de webhook.
+// Humanização: simula "digitando" por um tempo proporcional ao tamanho do
+// texto (limitado), pra resposta não chegar instantânea como robô.
+async function simularDigitando(bot, chatId, texto) {
+  if (process.env.HUMANIZE === "off") return;
+  try {
+    await waha.startTyping(bot.wahaPort, chatId);
+    const ms = Math.min(600 + texto.length * 25, 4500);
+    await new Promise((r) => setTimeout(r, ms));
+    await waha.stopTyping(bot.wahaPort, chatId);
+  } catch (_) { /* presença é best-effort */ }
+}
+
+// Envia uma mensagem de saída: digitando + WAHA + log + evento de webhook.
 async function enviarResposta(bot, chatId, texto) {
   if (!texto) return;
+  await simularDigitando(bot, chatId, texto);
   await waha.sendText(bot.wahaPort, chatId, texto);
   await prisma.log.create({
     data: { botId: bot.id, phone: chatId, direction: "out", body: texto },
@@ -164,8 +177,9 @@ router.post("/:botId", async (req, res) => {
       if (!r.defer) return;
     }
 
-    // 3) Cérebro (LLM).
-    const resposta = await brain.responder(bot, textoOriginal, chatId);
+    // 3) Cérebro (LLM) — recebe os dados já coletados pelo fluxo como contexto.
+    const vars = (() => { try { return JSON.parse(conversa.flowVars || "{}"); } catch { return {}; } })();
+    const resposta = await brain.responder(bot, textoOriginal, chatId, { vars });
     await enviarResposta(bot, chatId, resposta);
   } catch (err) {
     console.error("[webhook] Erro:", err.message);

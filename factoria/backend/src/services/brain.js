@@ -9,13 +9,36 @@ function provedorEmUso() {
   return "ollama";
 }
 
-function promptSistema(bot) {
-  if (bot.prompt?.trim()) return bot.prompt.trim();
+// Diretrizes de base aplicadas a todo bot, somadas ao prompt customizado.
+function diretrizesBase() {
+  const data = new Date().toLocaleDateString("pt-BR", {
+    weekday: "long", day: "2-digit", month: "long", year: "numeric",
+  });
   return (
-    `Você é um assistente de WhatsApp chamado ${bot.name}. ` +
-    "Responda de forma curta, natural e direta. " +
-    "Nunca mencione que é uma IA a menos que perguntado diretamente."
+    `Hoje é ${data}. ` +
+    "Você conversa pelo WhatsApp: seja breve, natural e humano — sem textão. " +
+    "Use no máximo 2-3 frases por mensagem. " +
+    "Nunca invente preços, datas ou disponibilidade que você não tenha. " +
+    "Se não souber ou o cliente pedir, ofereça transferir para um atendente. " +
+    "Não diga que é uma IA a menos que perguntem diretamente."
   );
+}
+
+// Monta o system prompt: persona do bot + diretrizes + dados já coletados.
+function promptSistema(bot, contexto = {}) {
+  const persona = bot.prompt?.trim()
+    ? bot.prompt.trim()
+    : `Você é o ${bot.name}, atendente virtual no WhatsApp.`;
+
+  let sistema = `${persona}\n\n${diretrizesBase()}`;
+
+  // Injeta dados coletados pelo fluxo (nome, etc.) pra IA não repetir perguntas.
+  const vars = contexto.vars && Object.keys(contexto.vars).length ? contexto.vars : null;
+  if (vars) {
+    const linhas = Object.entries(vars).map(([k, v]) => `- ${k}: ${v}`).join("\n");
+    sistema += `\n\nO que você já sabe sobre este cliente:\n${linhas}`;
+  }
+  return sistema;
 }
 
 async function _groq(sistema, historico) {
@@ -85,8 +108,30 @@ function limparMemoria(bot, chatId) {
   memoria.delete(chave(bot, chatId));
 }
 
-async function responder(bot, mensagem, chatId) {
-  const sistema = promptSistema(bot);
+// Reidrata a memória a partir do banco (model Log) quando a RAM está vazia —
+// ex.: após reiniciar o backend, a conversa não "esquece" o contexto recente.
+async function hidratarDoBanco(bot, chatId) {
+  const k = chave(bot, chatId);
+  if (memoria.get(k)?.length) return; // já tem contexto em RAM
+  try {
+    const prisma = require("../db");
+    const logs = await prisma.log.findMany({
+      where: { botId: bot.id, phone: chatId },
+      orderBy: { createdAt: "desc" },
+      take: MAX_MENSAGENS,
+    });
+    const hist = logs.reverse().map((l) => ({
+      role: l.direction === "in" ? "user" : "assistant",
+      content: l.body,
+    }));
+    if (hist.length) memoria.set(k, hist);
+  } catch (_) { /* sem banco/logs → começa do zero */ }
+}
+
+// contexto: { vars } — dados coletados pelo fluxo, injetados no system prompt.
+async function responder(bot, mensagem, chatId, contexto = {}) {
+  if (bot?.id) await hidratarDoBanco(bot, chatId);
+  const sistema = promptSistema(bot, contexto);
   registrarMensagem(bot, chatId, "user", mensagem);
   const historico = obterHistorico(bot, chatId);
 
