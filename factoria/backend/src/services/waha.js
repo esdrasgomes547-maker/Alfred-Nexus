@@ -78,15 +78,32 @@ async function req(wahaPort, method, path, body = null) {
 
 // ── API pública ───────────────────────────────────────────────────────────────
 
+// ── Anti-ban: ritmo controlado de envio (guardrail do projeto) ──────────────
+// WAHA é não-oficial — rajadas de mensagens aumentam o risco de ban. Os envios
+// de cada bot são serializados numa fila, com um intervalo mínimo entre eles.
+const GAP_MIN_MS = parseInt(process.env.SEND_GAP_MS || "1200", 10);
+const filaEnvio = new Map(); // wahaPort -> cauda da fila (Promise)
+const espera = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function enfileirar(wahaPort, tarefa) {
+  const anterior = filaEnvio.get(wahaPort) || Promise.resolve();
+  // tarefa roda após a anterior (mesmo se ela falhou); o gap vem depois.
+  const minha = anterior.then(tarefa, tarefa);
+  filaEnvio.set(wahaPort, minha.then(() => espera(GAP_MIN_MS), () => espera(GAP_MIN_MS)));
+  return minha;
+}
+
 async function sendText(wahaPort, chatId, text) {
-  const data = await req(wahaPort, "post", "/api/sendText", {
-    session: "default",
-    chatId,
-    text,
+  return enfileirar(wahaPort, async () => {
+    const data = await req(wahaPort, "post", "/api/sendText", {
+      session: "default",
+      chatId,
+      text,
+    });
+    const id = extrairId(data);
+    if (id) global.sentMessages.set(id);
+    return data;
   });
-  const id = extrairId(data);
-  if (id) global.sentMessages.set(id);
-  return data;
 }
 
 async function startSession(wahaPort) {

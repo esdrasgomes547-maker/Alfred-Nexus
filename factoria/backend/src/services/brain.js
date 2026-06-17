@@ -128,12 +128,30 @@ async function hidratarDoBanco(bot, chatId) {
   } catch (_) { /* sem banco/logs → começa do zero */ }
 }
 
+// Normaliza o histórico pro formato que os provedores esperam: começa com
+// "user" e alterna papéis. Mensagens consecutivas do mesmo papel (cliente
+// mandou 2 seguidas) são fundidas — o Anthropic, em especial, erra sem isso.
+function normalizarHistorico(hist) {
+  const out = [];
+  for (const msg of hist) {
+    if (!msg.content) continue;
+    const ultimo = out[out.length - 1];
+    if (ultimo && ultimo.role === msg.role) {
+      ultimo.content += "\n" + msg.content; // funde mesmo papel
+    } else {
+      out.push({ role: msg.role, content: msg.content });
+    }
+  }
+  while (out.length && out[0].role !== "user") out.shift(); // precisa começar no user
+  return out;
+}
+
 // contexto: { vars } — dados coletados pelo fluxo, injetados no system prompt.
 async function responder(bot, mensagem, chatId, contexto = {}) {
   if (bot?.id) await hidratarDoBanco(bot, chatId);
   const sistema = promptSistema(bot, contexto);
   registrarMensagem(bot, chatId, "user", mensagem);
-  const historico = obterHistorico(bot, chatId);
+  const historico = normalizarHistorico(obterHistorico(bot, chatId));
 
   const provedor = provedorEmUso();
   try {
@@ -150,4 +168,4 @@ async function responder(bot, mensagem, chatId, contexto = {}) {
   }
 }
 
-module.exports = { responder, provedorEmUso, limparMemoria };
+module.exports = { responder, provedorEmUso, limparMemoria, normalizarHistorico };
