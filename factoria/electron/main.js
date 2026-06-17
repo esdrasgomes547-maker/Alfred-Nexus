@@ -17,6 +17,36 @@ const BACKEND_PORT = process.env.PORT || 4000;
 let mainWindow;
 let backendProcess;
 
+// ── Banco ───────────────────────────────────────────────────────────────────
+// Garante que o SQLite tenha todas as tabelas (idempotente). Como é self-hosted
+// e usa `prisma db push`, não precisamos de arquivos de migração versionados.
+function garantirBanco() {
+  return new Promise((resolve) => {
+    const backendDir = path.join(__dirname, "../backend");
+    const prismaBin = path.join(
+      backendDir,
+      "node_modules",
+      ".bin",
+      process.platform === "win32" ? "prisma.cmd" : "prisma"
+    );
+    const proc = spawn(prismaBin, ["db", "push", "--skip-generate", "--accept-data-loss"], {
+      cwd: backendDir,
+      env: { ...process.env, ...store.getAll() }, // DATABASE_URL do Porão
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    proc.stdout.on("data", (d) => process.stdout.write(`[db] ${d}`));
+    proc.stderr.on("data", (d) => process.stderr.write(`[db] ${d}`));
+    proc.on("exit", (code) => {
+      if (code !== 0) console.warn(`[db] prisma db push saiu com código ${code}`);
+      resolve();
+    });
+    proc.on("error", (err) => {
+      console.warn("[db] não consegui rodar prisma db push:", err.message);
+      resolve(); // segue mesmo assim — backend reporta erro de schema se faltar
+    });
+  });
+}
+
 // ── Backend ───────────────────────────────────────────────────────────────────
 
 function iniciarBackend() {
@@ -130,6 +160,7 @@ function registrarIPC() {
 
 app.whenReady().then(async () => {
   registrarIPC();
+  await garantirBanco();   // sincroniza o schema antes de subir o backend
   iniciarBackend();
   try {
     await aguardarBackend();
