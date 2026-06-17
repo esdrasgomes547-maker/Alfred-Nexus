@@ -1,4 +1,4 @@
-// Detalhe de um agente — conexão, configurações, skills, histórico
+// Detalhe de um agente — conexão, configurações, skills, fluxo, histórico
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Card      from "../components/Card";
@@ -6,14 +6,17 @@ import Input     from "../components/Input";
 import Button    from "../components/Button";
 import Badge     from "../components/Badge";
 import StatusDot from "../components/StatusDot";
-
-const API = "/api";
+import { api } from "../lib/api";
 
 function sessionVariant(status) {
   if (status === "WORKING") return "ok";
   if (status === "SCAN_QR_CODE") return "warn";
   return "default";
 }
+
+const cardH2 = { margin: "0 0 16px", fontSize: 13, fontWeight: 700, color: "var(--text-sec)", textTransform: "uppercase", letterSpacing: 0.6 };
+const label  = { display: "block", fontSize: 12, color: "var(--text-sec)", marginBottom: 5 };
+const group  = { marginBottom: 16 };
 
 export default function AgentDetail() {
   const { id } = useParams();
@@ -29,10 +32,10 @@ export default function AgentDetail() {
 
   const carregar = useCallback(async () => {
     const [b, st, lg, sk] = await Promise.all([
-      fetch(`${API}/bots/${id}`).then((r) => r.json()),
-      fetch(`${API}/bots/${id}/status`).then((r) => r.json()),
-      fetch(`${API}/bots/${id}/logs?limit=60`).then((r) => r.json()),
-      fetch(`${API}/skills?botId=${id}`).then((r) => r.json()),
+      api.get(`/api/bots/${id}`),
+      api.get(`/api/bots/${id}/status`).catch(() => null),
+      api.get(`/api/bots/${id}/logs?limit=60`).catch(() => []),
+      api.get(`/api/skills?botId=${id}`).catch(() => []),
     ]);
     setBot(b);
     setStatus(st);
@@ -44,56 +47,44 @@ export default function AgentDetail() {
   useEffect(() => { carregar(); }, [carregar]);
 
   async function conectar() {
-    await fetch(`${API}/bots/${id}/connect`, { method: "POST" });
+    await api.post(`/api/bots/${id}/connect`);
     setTimeout(carregar, 3000);
   }
 
   async function verQR() {
-    const data = await fetch(`${API}/bots/${id}/qr`).then((r) => r.json());
+    const data = await api.get(`/api/bots/${id}/qr`).catch(() => null);
     setQr(data?.mimetype ? `data:${data.mimetype};base64,${data.data}` : null);
   }
 
   async function salvarEdicao(e) {
     e.preventDefault();
     setSalv(true);
-    await fetch(`${API}/bots/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(editForm),
-    });
-    setSalv(false);
-    carregar();
+    try { await api.patch(`/api/bots/${id}`, editForm); await carregar(); }
+    catch (err) { alert(err.message); }
+    finally { setSalv(false); }
   }
 
   async function deletarBot() {
     if (!confirm(`Deletar o agente "${bot?.name}"? O container WAHA será removido.`)) return;
-    await fetch(`${API}/bots/${id}`, { method: "DELETE" });
+    await api.del(`/api/bots/${id}`);
     navigate("/");
   }
 
   async function adicionarSkill(e) {
     e.preventDefault();
     if (!novaSkill.trigger.trim() || !novaSkill.response.trim()) return;
-    await fetch(`${API}/skills`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ botId: id, ...novaSkill }),
-    });
+    await api.post(`/api/skills`, { botId: id, ...novaSkill });
     setNS({ name: "", trigger: "", response: "" });
     carregar();
   }
 
   async function toggleSkill(skillId, active) {
-    await fetch(`${API}/skills/${skillId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ active: !active }),
-    });
+    await api.patch(`/api/skills/${skillId}`, { active: !active });
     carregar();
   }
 
   async function deletarSkill(skillId) {
-    await fetch(`${API}/skills/${skillId}`, { method: "DELETE" });
+    await api.del(`/api/skills/${skillId}`);
     carregar();
   }
 
@@ -102,17 +93,12 @@ export default function AgentDetail() {
   const sessLabel = status?.session?.status || "—";
   const containerOk = status?.container === "running";
 
-  const cardH2 = { margin: "0 0 16px", fontSize: 13, fontWeight: 700, color: "var(--text-sec)", textTransform: "uppercase", letterSpacing: 0.6 };
-  const label  = { display: "block", fontSize: 12, color: "var(--text-sec)", marginBottom: 5 };
-  const group  = { marginBottom: 16 };
-
   return (
     <div className="fade-in" style={{ padding: "32px 32px 60px" }}>
       <button onClick={() => navigate("/")} style={{ background: "none", border: "none", color: "var(--text-sec)", cursor: "pointer", fontSize: 13, padding: 0, marginBottom: 24 }}>
         ← Voltar
       </button>
 
-      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28, flexWrap: "wrap" }}>
         <StatusDot status={containerOk ? "running" : "stopped"} size={11} />
         <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>{bot.name}</h1>
@@ -175,12 +161,7 @@ export default function AgentDetail() {
                 <span style={{ color: "var(--text-muted)" }}>gatilho:</span>{" "}
                 <code style={{ color: "var(--accent)" }}>{sk.trigger}</code>
               </span>
-              <Badge
-                label={sk.active ? "Ativa" : "Inativa"}
-                variant={sk.active ? "ok" : "default"}
-                style={{ cursor: "pointer" }}
-                onClick={() => toggleSkill(sk.id, sk.active)}
-              />
+              <Badge label={sk.active ? "Ativa" : "Inativa"} variant={sk.active ? "ok" : "default"} style={{ cursor: "pointer" }} onClick={() => toggleSkill(sk.id, sk.active)} />
               <Button variant="danger" onClick={() => deletarSkill(sk.id)} style={{ padding: "4px 10px" }}>✕</Button>
             </div>
           ))}
@@ -194,27 +175,22 @@ export default function AgentDetail() {
           </form>
         </Card>
 
+        {/* Fluxo de trabalho */}
+        <div style={{ gridColumn: "span 2" }}>
+          <FlowEditor botId={id} />
+        </div>
+
         {/* Histórico */}
         <Card style={{ gridColumn: "span 2" }}>
           <div style={{ ...cardH2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             Histórico de mensagens
             <Button variant="ghost" onClick={carregar} style={{ textTransform: "none", fontWeight: 500 }}>Atualizar</Button>
           </div>
-          <div style={{
-            background: "#050505",
-            borderRadius: "var(--radius-sm)",
-            padding: 14,
-            maxHeight: 320,
-            overflowY: "auto",
-            fontSize: 12,
-            fontFamily: "var(--font-mono)",
-          }}>
+          <div style={{ background: "#050505", borderRadius: "var(--radius-sm)", padding: 14, maxHeight: 320, overflowY: "auto", fontSize: 12, fontFamily: "var(--font-mono)" }}>
             {logs.length === 0 && <span style={{ color: "var(--text-muted)" }}>Sem mensagens ainda.</span>}
             {logs.map((lg) => (
               <div key={lg.id} style={{ color: lg.direction === "in" ? "var(--blue)" : "var(--green)", marginBottom: 5, lineHeight: 1.6 }}>
-                <span style={{ color: "var(--text-muted)" }}>
-                  [{new Date(lg.createdAt).toLocaleTimeString("pt-BR")}]
-                </span>
+                <span style={{ color: "var(--text-muted)" }}>[{new Date(lg.createdAt).toLocaleTimeString("pt-BR")}]</span>
                 {lg.direction === "in" ? " ← " : " → "}
                 <strong>{lg.phone}</strong>: {lg.body}
               </div>
@@ -223,5 +199,110 @@ export default function AgentDetail() {
         </Card>
       </div>
     </div>
+  );
+}
+
+// ── Editor de fluxo de trabalho ───────────────────────────────────────────────
+const MODELO = {
+  start: "saudacao",
+  nodes: {
+    saudacao: { type: "message", text: "Oi! Seja bem-vindo. 👋", next: "menu" },
+    menu: {
+      type: "menu",
+      text: "Como posso te ajudar?",
+      options: [
+        { label: "Fazer um pedido", next: "nome" },
+        { label: "Tirar dúvidas",   next: "duvidas" },
+        { label: "Falar com humano", next: "humano" },
+      ],
+    },
+    nome:    { type: "collect", text: "Legal! Qual seu nome?", var: "nome", next: "confirma" },
+    confirma:{ type: "message", text: "Perfeito, {{nome}}! Vou te ajudar com o pedido.", next: "duvidas" },
+    duvidas: { type: "ai", text: "Pode perguntar o que quiser!" },
+    humano:  { type: "handoff", text: "cliente escolheu falar com humano" },
+  },
+};
+
+function FlowEditor({ botId }) {
+  const [texto, setTexto]   = useState("");
+  const [ativo, setAtivo]   = useState(false);
+  const [nome, setNome]     = useState("Fluxo principal");
+  const [msg, setMsg]       = useState(null);
+  const [salvando, setSalv] = useState(false);
+
+  const carregar = useCallback(async () => {
+    const flow = await api.get(`/api/flows/${botId}`).catch(() => null);
+    if (flow) {
+      setAtivo(flow.active);
+      setNome(flow.name || "Fluxo principal");
+      try { setTexto(JSON.stringify(JSON.parse(flow.definition || "{}"), null, 2)); }
+      catch { setTexto(flow.definition || ""); }
+    } else {
+      setTexto(JSON.stringify(MODELO, null, 2));
+    }
+  }, [botId]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  function parse() {
+    try { return { def: JSON.parse(texto) }; }
+    catch (e) { return { erro: "JSON inválido: " + e.message }; }
+  }
+
+  async function validar() {
+    const { def, erro } = parse();
+    if (erro) return setMsg({ tipo: "erro", txt: erro });
+    const r = await api.post(`/api/flows/${botId}/validar`, { definition: def });
+    setMsg(r.ok ? { tipo: "ok", txt: "Fluxo válido ✓" } : { tipo: "erro", txt: r.erros.join(" · ") });
+  }
+
+  async function salvar(ativarAgora) {
+    const { def, erro } = parse();
+    if (erro) return setMsg({ tipo: "erro", txt: erro });
+    setSalv(true);
+    try {
+      const flow = await api.put(`/api/flows/${botId}`, { name: nome, active: ativarAgora, definition: def });
+      setAtivo(flow.active);
+      setMsg({ tipo: "ok", txt: ativarAgora ? "Fluxo salvo e ativado ✓" : "Fluxo salvo (inativo)" });
+    } catch (err) {
+      setMsg({ tipo: "erro", txt: err.detalhes ? err.detalhes.join(" · ") : err.message });
+    } finally { setSalv(false); }
+  }
+
+  const corMsg = msg?.tipo === "ok" ? "var(--green)" : "var(--red)";
+
+  return (
+    <Card>
+      <div style={{ ...cardH2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>Fluxo de trabalho</span>
+        <Badge label={ativo ? "Ativo" : "Inativo"} variant={ativo ? "ok" : "default"} />
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12, lineHeight: 1.6 }}>
+        Roteiro automático que o bot segue antes de cair na IA. Tipos de nó:{" "}
+        <code style={{ color: "var(--accent)" }}>message</code>,{" "}
+        <code style={{ color: "var(--accent)" }}>menu</code>,{" "}
+        <code style={{ color: "var(--accent)" }}>collect</code>,{" "}
+        <code style={{ color: "var(--accent)" }}>ai</code>,{" "}
+        <code style={{ color: "var(--accent)" }}>handoff</code>,{" "}
+        <code style={{ color: "var(--accent)" }}>end</code>.
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <label style={label}>Nome do fluxo</label>
+        <Input value={nome} onChange={(e) => setNome(e.target.value)} />
+      </div>
+
+      <Input multiline value={texto} onChange={(e) => setTexto(e.target.value)}
+        style={{ minHeight: 240, fontFamily: "var(--font-mono)", fontSize: 12 }} />
+
+      {msg && <div style={{ color: corMsg, fontSize: 12, marginTop: 10 }}>{msg.txt}</div>}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+        <Button variant="ghost"   onClick={validar}>Validar</Button>
+        <Button variant="primary" loading={salvando} onClick={() => salvar(true)}>Salvar e ativar</Button>
+        <Button variant="ghost"   onClick={() => salvar(false)}>Salvar inativo</Button>
+        <Button variant="ghost"   onClick={() => setTexto(JSON.stringify(MODELO, null, 2))}>Carregar modelo</Button>
+      </div>
+    </Card>
   );
 }

@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Input  from "../components/Input";
 import Button from "../components/Button";
+import { api } from "../lib/api";
 
 const PASSOS = ["Identidade", "Personalidade", "Revisar"];
 
@@ -67,19 +68,19 @@ export default function AgentWizard() {
 
   async function criar() {
     setCria(true);
-    const resp = await fetch("/api/bots", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      const bot = await api.post("/api/bots", {
         name:   form.name,
         prompt: form.prompt,
         cmdOn:  form.cmdOn,
         cmdOff: form.cmdOff,
-      }),
-    });
-    const bot = await resp.json();
-    setCria(false);
-    if (bot.id) navigate(`/bot/${bot.id}`);
+      });
+      if (bot.id) navigate(`/bot/${bot.id}`);
+    } catch (err) {
+      alert(err.message || "Falha ao criar agente");
+    } finally {
+      setCria(false);
+    }
   }
 
   return (

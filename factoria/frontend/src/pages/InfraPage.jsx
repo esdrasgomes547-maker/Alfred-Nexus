@@ -5,8 +5,7 @@ import Badge     from "../components/Badge";
 import Button    from "../components/Button";
 import Input     from "../components/Input";
 import StatusDot from "../components/StatusDot";
-
-const API = "/api";
+import { api } from "../lib/api";
 
 export default function InfraPage() {
   const [status, setStatus]     = useState(null);
@@ -18,11 +17,11 @@ export default function InfraPage() {
 
   async function carregar() {
     const [st, dk] = await Promise.all([
-      fetch(`${API}/infra/status`).then((r) => r.json()),
-      fetch(`${API}/infra/docker`).then((r) => r.json()),
+      api.get(`/api/infra/status`).catch(() => null),
+      api.get(`/api/infra/docker`).catch(() => ({ containers: [] })),
     ]);
     setStatus(st);
-    setDocker(dk.containers || []);
+    setDocker(dk?.containers || []);
   }
 
   useEffect(() => {
@@ -42,14 +41,14 @@ export default function InfraPage() {
     setInput("");
     setMsgs((m) => [...m, { papel: "user", texto }]);
     setEnviando(true);
-    const resp = await fetch(`${API}/infra/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mensagem: texto }),
-    });
-    const data = await resp.json();
-    setMsgs((m) => [...m, { papel: "bot", texto: data.resposta || "..." }]);
-    setEnviando(false);
+    try {
+      const data = await api.post(`/api/infra/chat`, { mensagem: texto });
+      setMsgs((m) => [...m, { papel: "bot", texto: data.resposta || "..." }]);
+    } catch (err) {
+      setMsgs((m) => [...m, { papel: "bot", texto: "Erro: " + err.message }]);
+    } finally {
+      setEnviando(false);
+    }
   }
 
   const cardH2 = { margin: "0 0 16px", fontSize: 13, fontWeight: 700, color: "var(--text-sec)", textTransform: "uppercase", letterSpacing: 0.6 };
