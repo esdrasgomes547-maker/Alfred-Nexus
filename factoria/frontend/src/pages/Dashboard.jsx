@@ -29,6 +29,7 @@ function containerDot(s) {
 export default function Dashboard() {
   const [agentes, setAgentes]     = useState([]);
   const [statuses, setStatuses]   = useState({});
+  const [pendentes, setPendentes] = useState(0);
   const navigate  = useNavigate();
   const { call }  = useApi();
 
@@ -36,6 +37,10 @@ export default function Dashboard() {
     const lista = await call("/api/bots");
     if (!lista) return;
     setAgentes(lista);
+
+    // Conversas aguardando atendimento humano (handoffs pendentes)
+    const humanas = await call("/api/conversations?status=human").catch(() => []);
+    setPendentes(Array.isArray(humanas) ? humanas.length : 0);
 
     // Busca status de cada agente em paralelo
     const st = {};
@@ -77,6 +82,38 @@ export default function Dashboard() {
           + Novo agente
         </Button>
       </div>
+
+      {/* Resumo da operação */}
+      {agentes.length > 0 && (() => {
+        const conectados = Object.values(statuses).filter((s) => s.session === "WORKING").length;
+        const totalMsgs  = Object.values(statuses).reduce((a, s) => a + (s.msgsHoje || 0), 0);
+        const tiles = [
+          { rotulo: "Agentes", valor: agentes.length },
+          { rotulo: "Conectados", valor: conectados, cor: "var(--green)" },
+          { rotulo: "Msgs hoje", valor: totalMsgs },
+        ];
+        return (
+          <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
+            {tiles.map((t) => (
+              <div key={t.rotulo} style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "12px 20px", minWidth: 110 }}>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>{t.rotulo}</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: t.cor || "var(--text-pri)" }}>{t.valor}</div>
+              </div>
+            ))}
+            {pendentes > 0 && (
+              <div onClick={() => navigate("/atendimento")} style={{
+                background: "var(--yellow-dim)", border: "1px solid var(--yellow)", borderRadius: "var(--radius-md)",
+                padding: "12px 20px", minWidth: 160, cursor: "pointer", display: "flex", flexDirection: "column", justifyContent: "center",
+              }}>
+                <div style={{ fontSize: 10, color: "var(--yellow)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 4 }}>Aguardando atendente</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-pri)" }}>
+                  {pendentes} conversa{pendentes > 1 ? "s" : ""} →
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Sem agentes */}
       {agentes.length === 0 && (
