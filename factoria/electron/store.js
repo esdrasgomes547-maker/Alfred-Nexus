@@ -16,6 +16,9 @@ const PADROES = {
   ELEVENLABS_API_KEY: "",
   ANDRE_WHATSAPP:     "",
   DATABASE_URL:       "file:./factoria.db",
+  // Segurança da plataforma — encriptados no keychain como o resto.
+  CRYPTO_SECRET:      "",
+  JWT_SECRET:         "",
 };
 
 function getAll() {

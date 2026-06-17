@@ -8,6 +8,20 @@ Plataforma desktop (Electron) para criar e gerenciar bots de WhatsApp com IA —
 - **Desktop**: Electron
 - **WhatsApp**: WAHA (1 container Docker por bot, portas 4100+)
 - **LLM**: Groq (primário) / Ollama (fallback local) / Anthropic (opcional)
+- **Segurança**: login JWT + RBAC, helmet, rate limit, validação Zod
+
+## O que a plataforma faz
+
+- **Agentes**: cada bot é uma sessão isolada de WhatsApp (container WAHA) com
+  persona/prompt, comandos liga/desliga e memória de conversa próprios.
+- **Atendimento virtual**: conversa por contato com handoff automático pra
+  humano (palavra-chave ou pedido) e central pro operador assumir/responder.
+- **Fluxo de trabalho**: roteiro configurável (menu, coleta de dados, IA,
+  handoff) que o bot segue antes de cair no LLM.
+- **Integrações (/v1)**: chaves de API com escopo + webhooks de saída assinados,
+  pra plugar site/CRM/n8n. Inclui endpoint de chat com a IA do bot.
+- **Autenticação e acesso**: login, papéis (admin/operator/viewer), gestão de
+  usuários e cofre de segredos (Porão).
 
 ## Início rápido
 
@@ -52,22 +66,41 @@ factoria/
         docker.js    ← criar/parar/remover containers
         brain.js     ← LLM (Anthropic > Groq > Ollama)
         crypto.js    ← AES-256-GCM para dados sensíveis
+      routes/
+        auth.js          ← setup/login/me + CRUD de usuários (RBAC)
+        keys.js          ← chaves de API e webhooks de saída
+        gateway.js       ← API pública /v1 (autenticada por chave)
+        conversations.js ← central de atendimento
+        flows.js         ← CRUD de fluxos de trabalho
+      services/
+        auth.js      ← bcrypt + JWT
+        gateway.js   ← gera/resolve chaves, dispara webhooks (HMAC)
+        atendimento.js ← conversas + detecção de handoff
+        workflow.js  ← motor de fluxo (máquina de estados pura)
+      middleware/
+        auth.js      ← requireAuth + requireRole (viewer<operator<admin)
+        apiKey.js    ← autenticação por chave de API (escopos)
+      utils/http.js  ← AppError, asyncHandler, validação Zod
+      db.js          ← PrismaClient singleton
       server.js      ← Express, init banco, graceful shutdown
     prisma/
-      schema.prisma  ← Bot (cmdOn/cmdOff por bot), Skill, Log
+      schema.prisma  ← User, Bot, Skill, Log, ApiKey, WebhookEndpoint,
+                       Conversation, Flow
   frontend/
     src/
-      components/
-        Card.jsx, Badge.jsx, Button.jsx, Input.jsx, StatusDot.jsx
-      hooks/
-        useApi.js    ← wrapper de fetch com loading/error
+      lib/api.js     ← cliente HTTP com token JWT + tratamento de 401
+      auth/AuthContext.jsx ← sessão (setup/login/logout)
+      components/    ← Card, Badge, Button, Input, StatusDot
       pages/
+        Gate.jsx        ← login / setup do 1º admin
         Dashboard.jsx   ← lista de agentes com status em tempo real
         AgentWizard.jsx ← criação de agente em 3 passos
-        AgentDetail.jsx ← conexão, configurações, skills, histórico
+        AgentDetail.jsx ← conexão, config, skills, fluxo, histórico
+        Atendimento.jsx ← central de conversas (handoff humano)
+        Integracoes.jsx ← chaves de API + webhooks
         InfraPage.jsx   ← containers Docker + chat IA interna
         Porao.jsx       ← cofre de chaves da plataforma
-      App.jsx        ← roteamento + menu lateral
+      App.jsx        ← roteamento + menu lateral (gated por login)
       index.html     ← design system obsidian / black piano (CSS vars)
   electron/
     main.js          ← sobe backend como filho, serve frontend, registra IPC
@@ -88,19 +121,54 @@ URL do banco. Nunca tocam o disco em texto puro:
 - "Reiniciar backend" mata o processo filho do Express e sobe de novo já com as
   novas chaves injetadas via `env`.
 
-## Rotas da API
+## Autenticação
+
+Todas as rotas `/api/*` (exceto `/api/auth/setup` e `/api/auth/login`) exigem
+`Authorization: Bearer <token>`. O primeiro acesso cria o admin via setup; depois
+é login por e-mail/senha. Papéis: `viewer` < `operator` < `admin`.
+
+```bash
+# bootstrap headless (sem UI)
+ADMIN_EMAIL=voce@ex.com ADMIN_PASSWORD=segredo123 npm --prefix backend run seed
+```
+
+## Rotas da API (painel — exige login)
 
 | Método | Rota | Descrição |
 |---|---|---|
-| GET  | `/api/bots` | Lista todos os bots |
-| POST | `/api/bots` | Cria bot + container WAHA |
-| GET  | `/api/bots/:id/status` | Status WAHA + Docker |
-| POST | `/api/bots/:id/connect` | Conecta sessão WhatsApp |
-| GET  | `/api/bots/:id/qr` | QR Code para escanear |
-| GET  | `/api/bots/:id/logs` | Histórico de mensagens |
-| POST | `/webhook/waha/:botId` | Recebe eventos do WAHA |
-| GET  | `/api/infra/status` | Status geral da plataforma |
-| POST | `/api/infra/chat` | Chat da IA interna |
+| POST | `/api/auth/setup` · `/login` · GET `/me` | Sessão |
+| GET/POST/PATCH/DELETE | `/api/auth/users` | Gestão de usuários (admin) |
+| GET/POST | `/api/bots` (+ `/:id/connect`, `/qr`, `/status`, `/logs`) | Agentes |
+| GET/POST/PATCH/DELETE | `/api/skills` | Habilidades fixas |
+| GET/PUT/DELETE | `/api/flows/:botId` (+ `/validar`) | Fluxo de trabalho |
+| GET/POST | `/api/conversations` (+ `/:id/assumir`, `/devolver`, `/encerrar`, `/responder`) | Atendimento |
+| GET/POST/PATCH/DELETE | `/api/keys` e `/api/keys/webhooks` | Integrações |
+| GET/POST | `/api/infra/status` · `/docker` · `/chat` | Infra + IA interna |
+
+## Gateway de integração (`/v1` — exige chave de API)
+
+Autenticado por `Authorization: Bearer fct_…` ou `X-API-Key`. Escopos: `send`,
+`read`, `chat`. Webhooks de saída assinam o corpo em `X-FactorIA-Signature` (HMAC-SHA256).
+
+| Método | Rota | Escopo | Descrição |
+|---|---|---|---|
+| GET  | `/v1/bots` | read | Bots acessíveis pela chave |
+| POST | `/v1/messages` | send | Envia mensagem de WhatsApp |
+| GET  | `/v1/messages` | read | Histórico de mensagens |
+| POST | `/v1/chat` | chat | Resposta da IA do bot (sem enviar ao WhatsApp) |
+
+```bash
+curl -X POST http://127.0.0.1:4000/v1/chat \
+  -H "Authorization: Bearer fct_xxxx_yyyy" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Quais os horários?","sessionId":"visitante-42"}'
+```
+
+## Webhook do WAHA
+
+| Método | Rota | Descrição |
+|---|---|---|
+| POST | `/webhook/waha/:botId` | Recebe eventos do WAHA (sem auth — tráfego do container) |
 
 ## Fix @lev/@levoff (não reverter)
 
@@ -114,8 +182,16 @@ const isDeactivate = normalized === cmdOff;
 **Nunca use `.includes()`** — a substring apareceria na confirmação do próprio bot
 (que volta pelo webhook como evento) e causaria loop de desativação.
 
+## Testes
+
+```bash
+npm --prefix backend test     # motor de fluxo (node --test)
+```
+
 ## Pendências futuras
 
 - [ ] Migrar de 1 container/bot (WAHA Core) → WAHA Plus multi-sessão
 - [ ] Tool-calling na IA interna (executar ações na API via chat)
+- [ ] Editor visual de fluxo (arrastar-soltar) além do JSON
+- [ ] Persistir memória longa do cérebro em banco (hoje reidrata dos logs)
 - [ ] Mover backend pra servidor 24h + frontend web (sair do Electron)

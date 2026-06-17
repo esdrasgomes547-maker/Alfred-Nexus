@@ -34,6 +34,12 @@ const CAMPOS = [
       { key: "DATABASE_URL", label: "Database URL", ph: "file:./factoria.db", type: "text", dica: "SQLite padrão — ou postgresql://… para externo" },
     ],
   },
+  { group: "Segurança da plataforma",
+    itens: [
+      { key: "CRYPTO_SECRET", label: "Crypto Secret", ph: "32+ caracteres", type: "password", dica: "Encripta dados sensíveis (mín. 32 chars)" },
+      { key: "JWT_SECRET",    label: "JWT Secret",    ph: "vazio = deriva do Crypto", type: "password", dica: "Assina os tokens de login" },
+    ],
+  },
 ];
 
 const MASKED = "••••••••";
