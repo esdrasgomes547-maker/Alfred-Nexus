@@ -8,6 +8,7 @@ import AgentWizard  from "./pages/AgentWizard";
 import AgentDetail  from "./pages/AgentDetail";
 import Atendimento  from "./pages/Atendimento";
 import Integracoes  from "./pages/Integracoes";
+import Usuarios     from "./pages/Usuarios";
 import InfraPage    from "./pages/InfraPage";
 import Porao        from "./pages/Porao";
 
@@ -75,6 +76,7 @@ export default function App() {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
           {NAV_ITEMS.map((n) => <SidebarLink key={n.to} {...n} />)}
+          {user.role === "admin" && <SidebarLink to="/usuarios" icon="◉" label="Usuários" />}
         </div>
 
         {/* Rodapé: usuário + Porão + versão */}
@@ -117,6 +119,7 @@ export default function App() {
           <Route path="/bot/:id"      element={<AgentDetail />} />
           <Route path="/atendimento"  element={<Atendimento />} />
           <Route path="/integracoes"  element={<Integracoes />} />
+          <Route path="/usuarios"     element={<Usuarios />} />
           <Route path="/infra"        element={<InfraPage />} />
           <Route path="/porao"        element={<Porao />} />
         </Routes>
