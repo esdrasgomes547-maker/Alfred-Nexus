@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FactorIA — Widget de Chat (exemplo)</title>
+  <!--
+    Widget de chat embutível que conversa com a IA de um bot via gateway /v1/chat.
+    Não envia nada pro WhatsApp — é a inteligência do bot rodando no seu site.
+
+    Como usar:
+      1. Crie uma chave de API com escopo "chat" em Integrações.
+      2. Troque FACTORIA_URL e API_KEY abaixo.
+      3. Hospede este HTML (ou copie o bloco <style>/<script> pro seu site).
+
+    Produção: faça a chamada por um proxy no seu backend pra não expor a chave
+    no navegador. Aqui ela aparece no front só para fins de demonstração.
+  -->
+  <style>
+    :root {
+      --bg: #0d0d0d; --panel: #181818; --border: #222; --accent: #7c3aed;
+      --text: #f0f0f0; --muted: #777;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+    #fab {
+      position: fixed; bottom: 22px; right: 22px; width: 56px; height: 56px; border-radius: 50%;
+      background: var(--accent); color: #fff; border: none; font-size: 24px; cursor: pointer;
+      box-shadow: 0 8px 28px rgba(124,58,237,.5);
+    }
+    #chat {
+      position: fixed; bottom: 90px; right: 22px; width: 340px; height: 460px; display: none;
+      flex-direction: column; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 16px; overflow: hidden; box-shadow: 0 16px 48px rgba(0,0,0,.6);
+    }
+    #chat.aberto { display: flex; }
+    header { padding: 14px 16px; font-weight: 700; border-bottom: 1px solid var(--border); }
+    header small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; }
+    #msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+    .b { padding: 8px 12px; border-radius: 12px; max-width: 80%; font-size: 13px; line-height: 1.45; }
+    .u { align-self: flex-end; background: var(--accent); color: #fff; }
+    .a { align-self: flex-start; background: #242424; }
+    form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
+    input { flex: 1; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border); background: #0d0d0d; color: var(--text); }
+    button[type=submit] { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 0 14px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <button id="fab" onclick="document.getElementById('chat').classList.toggle('aberto')">💬</button>
+
+  <div id="chat">
+    <header>Atendimento<small>powered by FactorIA</small></header>
+    <div id="msgs"></div>
+    <form id="form">
+      <input id="campo" placeholder="Escreva sua mensagem…" autocomplete="off" />
+      <button type="submit">→</button>
+    </form>
+  </div>
+
+  <script>
+    // ── Configuração ──────────────────────────────────────────────────────
+    const FACTORIA_URL = "http://127.0.0.1:4000";  // URL do backend FactorIA
+    const API_KEY      = "fct_xxxxxxxx_yyyy";        // chave com escopo "chat"
+    const BOT_ID       = "";                          // opcional se a chave já é de 1 bot
+
+    // sessão estável por visitante (isola o histórico no servidor)
+    const sessionId = localStorage.getItem("factoria_sid")
+      || (localStorage.setItem("factoria_sid", "site-" + Math.random().toString(36).slice(2)), localStorage.getItem("factoria_sid"));
+
+    const msgs = document.getElementById("msgs");
+    function bolha(texto, classe) {
+      const d = document.createElement("div");
+      d.className = "b " + classe;
+      d.textContent = texto;
+      msgs.appendChild(d);
+      msgs.scrollTop = msgs.scrollHeight;
+      return d;
+    }
+    bolha("Oi! Como posso ajudar?", "a");
+
+    document.getElementById("form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const campo = document.getElementById("campo");
+      const texto = campo.value.trim();
+      if (!texto) return;
+      campo.value = "";
+      bolha(texto, "u");
+      const pensando = bolha("…", "a");
+      try {
+        const r = await fetch(FACTORIA_URL + "/v1/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + API_KEY },
+          body: JSON.stringify({ message: texto, sessionId, botId: BOT_ID || undefined }),
+        });
+        const data = await r.json();
+        pensando.textContent = data.reply || data.error || "Sem resposta.";
+      } catch (err) {
+        pensando.textContent = "Erro de conexão: " + err.message;
+      }
+    });
+  </script>
+</body>
+</html>
