@@ -1,0 +1,35 @@
+# Escopo autorizado para operações de segurança/recon.
+# QUALQUER alvo fora desta lista é recusado automaticamente.
+# Edite apenas com consciência do que está autorizando.
+
+scope_version: "1.0"
+owner: "Esdras"
+locked: true
+
+# Máquinas próprias, lab local e CTFs autorizados
+authorized_targets:
+  # Rede local / lab
+  - name: "localhost"
+    address: "127.0.0.1"
+    type: "local"
+    notes: "Máquina principal"
+
+  - name: "lab-net"
+    cidr: "192.168.1.0/24"
+    type: "local_network"
+    notes: "Rede doméstica — apenas varredura de inventário"
+
+  # CTF / ambientes de prática (adicionar conforme necessário)
+  # - name: "hack-the-box-target"
+  #   address: "10.10.10.x"
+  #   type: "ctf"
+  #   notes: "HTB season X, máquina Y"
+
+# Operações permitidas por tipo de alvo
+allowed_operations:
+  local: ["ping", "port_scan", "service_detect", "whois"]
+  local_network: ["ping", "port_scan"]
+  ctf: ["ping", "port_scan", "service_detect", "whois", "banner_grab"]
+
+# Tudo é auditado — nenhuma operação passa sem log
+audit: true
